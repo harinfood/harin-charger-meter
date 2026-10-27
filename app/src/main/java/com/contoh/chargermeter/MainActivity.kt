@@ -20,7 +20,9 @@ import android.view.Gravity
 import android.view.View
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
+import android.widget.FrameLayout
 import android.widget.ImageView
+import android.view.animation.LinearInterpolator
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
@@ -79,6 +81,24 @@ class MainActivity : Activity() {
     private var warnaDotTerakhir = 0
     private val tile = HashMap<String, Pair<TextView, TextView>>()
 
+    // Panel PiP
+    private lateinit var scrollUtama: View
+    private lateinit var pipPanel: FrameLayout
+    private lateinit var pipGauge: GaugeView
+    private lateinit var pipPersen: TextView
+    private lateinit var pipAngka: TextView
+    private lateinit var pipSub: TextView
+    private lateinit var pipPill: TextView
+    private lateinit var pipPanah: TextView
+    private lateinit var pipKolom: LinearLayout
+    private lateinit var pipFlash: View
+    private val pipDots = mutableListOf<View>()
+    private lateinit var animPipPersen: AnimasiAngka
+    private var pipHalaman = 0
+    private var pipData: DataBaterai? = null
+    private var animPanah: ObjectAnimator? = null
+    private var arahPanah = 0
+
     private val jadwal = object : Runnable {
         override fun run() {
             segarkan()
@@ -89,7 +109,9 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(buatLayar())
+        scrollUtama = buatLayar()
+        pipPanel = buatPipPanel()
+        setContentView(scrollUtama)
         mintaIzinNotifikasi()
         PemantauService.sinkronkan(this)
     }
@@ -468,6 +490,7 @@ class MainActivity : Activity() {
             Warna.teksUtama
         )
 
+        perbaruiPip(d)
         if (hitungan % 5 == 0) WidgetBaterai.perbaruiSemua(this)
     }
 
@@ -572,8 +595,168 @@ class MainActivity : Activity() {
 
     override fun onPictureInPictureModeChanged(isInPip: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPip, newConfig)
-        val visibilitas = if (isInPip) View.GONE else View.VISIBLE
-        header.visibility = visibilitas
-        bagianDetail.visibility = visibilitas
+        if (isInPip) {
+            pipData?.let { renderPipKolom(it) }
+            setContentView(pipPanel)
+            pipPanel.alpha = 0f
+            pipPanel.scaleX = 0.9f
+            pipPanel.scaleY = 0.9f
+            pipPanel.animate().alpha(1f).scaleX(1f).scaleY(1f)
+                .setDuration(420L).setInterpolator(OvershootInterpolator()).start()
+        } else {
+            setContentView(scrollUtama)
+        }
+    }
+
+    /** Panel PiP: gauge arus di kiri, angka dan status di kanan, bisa ditekan untuk ganti halaman. */
+    private fun buatPipPanel(): FrameLayout {
+        val root = FrameLayout(this)
+        val latar = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(Warna.hijauTua, Warna.hijauTerang))
+        latar.cornerRadius = dpF(18f)
+        root.background = RippleDrawable(ColorStateList.valueOf(Color.parseColor("#40FFFFFF")), latar, null)
+        root.isClickable = true
+        root.setOnClickListener { onPipTap() }
+
+        val baris = linear(this, false)
+        baris.gravity = Gravity.CENTER_VERTICAL
+        baris.setPadding(dp(8), dp(6), dp(10), dp(6))
+
+        // Kartu putih untuk gauge
+        val kartuGauge = linear(this)
+        kartuGauge.gravity = Gravity.CENTER
+        kartuGauge.setPadding(dp(4), dp(4), dp(4), dp(4))
+        kartuGauge.background = kotak(this, Color.WHITE, 14)
+        pipGauge = GaugeView(this, kompak = true)
+        kartuGauge.addView(pipGauge, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        baris.addView(kartuGauge, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.4f))
+
+        // Kolom informasi
+        pipKolom = linear(this)
+        pipKolom.setPadding(dp(10), 0, 0, 0)
+        pipPersen = teks(this, "--%", 26f, Color.WHITE, true)
+        pipAngka = teks(this, "0 mA", 19f, Color.WHITE, true)
+        pipSub = teks(this, "-", 10f, Color.parseColor("#C8E6C9"))
+        pipKolom.addView(pipPersen)
+        pipKolom.addView(pipAngka)
+        pipKolom.addView(pipSub)
+
+        val barisPill = linear(this, false)
+        barisPill.gravity = Gravity.CENTER_VERTICAL
+        pipPill = teks(this, "-", 10f, Warna.hijauTua, true)
+        pipPill.setPadding(dp(7), dp(2), dp(7), dp(2))
+        pipPill.background = kotak(this, Color.WHITE, 10)
+        barisPill.addView(pipPill)
+        pipPanah = teks(this, "»»»", 11f, Color.parseColor("#B9F6CA"), true)
+        pipPanah.setPadding(dp(6), 0, 0, 0)
+        barisPill.addView(pipPanah)
+        pipKolom.addView(barisPill, lp(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT, 0f, dp(4), 0, 0, 0))
+
+        // Indikator halaman
+        val barisDots = linear(this, false)
+        for (i in 0 until 3) {
+            val titikHal = View(this)
+            titikHal.background = titik(Color.WHITE)
+            barisDots.addView(titikHal, LinearLayout.LayoutParams(dp(6), dp(6)).apply { setMargins(dp(3), 0, dp(3), 0) })
+            pipDots.add(titikHal)
+        }
+        pipKolom.addView(barisDots, lp(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT, 0f, dp(6), 0, 0, 0))
+
+        baris.addView(pipKolom, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        root.addView(baris, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+
+        // Kilatan cahaya saat ditekan
+        pipFlash = View(this)
+        pipFlash.setBackgroundColor(Color.WHITE)
+        pipFlash.alpha = 0f
+        root.addView(pipFlash, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+
+        animPipPersen = AnimasiAngka { v -> pipPersen.text = "${v.roundToInt()}%" }
+        return root
+    }
+
+    /** Animasi tekan: panel membal, kilatan cahaya, lalu isi kolom berganti halaman dengan geser halus. */
+    private fun onPipTap() {
+        pipPanel.animate().cancel()
+        pipPanel.scaleX = 0.94f
+        pipPanel.scaleY = 0.94f
+        pipPanel.animate().scaleX(1f).scaleY(1f).setDuration(460L)
+            .setInterpolator(OvershootInterpolator(2f)).start()
+
+        pipFlash.animate().cancel()
+        pipFlash.alpha = 0.3f
+        pipFlash.animate().alpha(0f).setDuration(400L).start()
+
+        pipHalaman = (pipHalaman + 1) % 3
+        pipKolom.animate().cancel()
+        pipKolom.animate().alpha(0f).translationX(dpF(16f)).setDuration(130L).withEndAction {
+            pipKolom.translationX = -dpF(16f)
+            pipData?.let { renderPipKolom(it) }
+            pipKolom.animate().alpha(1f).translationX(0f).setDuration(240L)
+                .setInterpolator(DecelerateInterpolator()).start()
+        }.start()
+    }
+
+    private fun renderPipKolom(d: DataBaterai) {
+        when (pipHalaman) {
+            0 -> {
+                pipAngka.text = "${d.arusMa} mA"
+                pipSub.text = when {
+                    d.arusBertanda > 0 -> "Arus mengalir masuk"
+                    d.arusBertanda < 0 -> "Arus mengalir keluar"
+                    else -> "Tidak ada arus"
+                }
+                pipPill.text = d.statusTeks
+            }
+            1 -> {
+                pipAngka.text = "%.1f W".format(d.dayaWatt)
+                pipSub.text = d.persenPerJam?.let { "%.0f%% per jam".format(it) } ?: "Kecepatan belum terbaca"
+                pipPill.text = if (d.terhubung) d.sumberCharger else "Dipakai"
+            }
+            else -> {
+                pipAngka.text = when {
+                    d.menitPenuh == null -> "--"
+                    d.menitPenuh == 0 -> "Penuh"
+                    else -> "${d.menitPenuh} mnt"
+                }
+                pipSub.text = d.jamPenuh?.let { "Penuh pukul $it" } ?: "Belum mengisi daya"
+                pipPill.text = "Perkiraan penuh"
+            }
+        }
+        pipPill.setTextColor(warnaStatus(d))
+        for (i in pipDots.indices) pipDots[i].alpha = if (i == pipHalaman) 1f else 0.35f
+    }
+
+    private fun perbaruiPip(d: DataBaterai) {
+        pipData = d
+        pipGauge.setNilai(d.arusBertanda)
+        animPipPersen.ke(d.persen.toFloat())
+        renderPipKolom(d)
+        aturAliranPip(d.arusBertanda)
+    }
+
+    /** Panah berjalan searah aliran arus: ke kanan saat mengisi, ke kiri saat memakai baterai. */
+    private fun aturAliranPip(arus: Int) {
+        val arah = when {
+            arus > 0 -> 1
+            arus < 0 -> -1
+            else -> 0
+        }
+        if (arah == arahPanah) return
+        arahPanah = arah
+        animPanah?.cancel()
+        animPanah = null
+        pipPanah.translationX = 0f
+        if (arah == 0) {
+            pipPanah.alpha = 0.3f
+            return
+        }
+        pipPanah.alpha = 1f
+        animPanah = ObjectAnimator.ofFloat(pipPanah, "translationX", 0f, dpF(10f) * arah).apply {
+            setDuration(700L)
+            repeatCount = ObjectAnimator.INFINITE
+            repeatMode = ObjectAnimator.RESTART
+            interpolator = LinearInterpolator()
+            start()
+        }
     }
 }

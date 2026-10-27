@@ -1,3 +1,4 @@
+
 package com.contoh.chargermeter
 
 import android.animation.ValueAnimator
@@ -16,8 +17,9 @@ import kotlin.math.sin
 /**
  * Meter setengah lingkaran: kiri (merah) = memakai baterai, kanan (hijau) = mengisi daya.
  * Skala -5.000 sampai +5.000 mA. Jarum bergerak halus ke nilai baru.
+ * kompak = true untuk tampilan kecil (PiP): tanpa label, garis lebih tipis.
  */
-class GaugeView(context: Context) : View(context) {
+class GaugeView(context: Context, private val kompak: Boolean = false) : View(context) {
 
     companion object {
         const val MAKS_MA = 5000f
@@ -44,7 +46,8 @@ class GaugeView(context: Context) : View(context) {
         }
     }
 
-    private val tebalGaris = context.dpF(20f)
+    private val tebalGaris = context.dpF(if (kompak) 11f else 20f)
+    private val sisaSamping = context.dpF(if (kompak) 6f else 44f)
     private val rect = RectF()
 
     private val paintLatar = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -67,7 +70,7 @@ class GaugeView(context: Context) : View(context) {
     }
     private val paintJarum = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = context.dpF(5f)
+        strokeWidth = context.dpF(if (kompak) 3f else 5f)
         strokeCap = Paint.Cap.ROUND
         color = Color.parseColor("#1B2A33")
     }
@@ -77,7 +80,7 @@ class GaugeView(context: Context) : View(context) {
     }
     private val paintLabel = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#607D8B")
-        textSize = context.dpF(13f)
+        textSize = context.dpF(if (kompak) 9f else 13f)
         textAlign = Paint.Align.CENTER
     }
 
@@ -92,8 +95,7 @@ class GaugeView(context: Context) : View(context) {
         val h = height.toFloat()
         val cx = w / 2f
         val cy = h * 0.88f
-        // Ruang di kiri-kanan disisakan untuk label "-5k" dan "5k" agar tidak terpotong
-        val r = minOf(w / 2f - context.dpF(44f), h * 0.80f)
+        val r = minOf(w / 2f - sisaSamping, h * 0.80f)
         rect.set(cx - r, cy - r, cx + r, cy + r)
 
         // Latar: kiri merah muda (memakai), kanan hijau muda (mengisi)
@@ -120,16 +122,18 @@ class GaugeView(context: Context) : View(context) {
             val cs = cos(sudut).toFloat()
             val sn = sin(sudut).toFloat()
             val r2 = rDalam - context.dpF(3f)
-            val panjang = if (i % 5 == 0) context.dpF(12f) else context.dpF(6f)
+            val panjang = if (i % 5 == 0) context.dpF(if (kompak) 7f else 12f) else context.dpF(if (kompak) 4f else 6f)
             val r1 = r2 - panjang
             canvas.drawLine(cx + cs * r1, cy + sn * r1, cx + cs * r2, cy + sn * r2, paintTick)
         }
 
-        // Label skala
-        val rLabel = r + tebalGaris / 2f + context.dpF(18f)
-        gambarLabel(canvas, "-5k", 180.0, cx, cy, rLabel)
-        gambarLabel(canvas, "0", 270.0, cx, cy, rLabel)
-        gambarLabel(canvas, "5k", 360.0, cx, cy, rLabel)
+        // Label skala (tidak ditampilkan pada mode kompak)
+        if (!kompak) {
+            val rLabel = r + tebalGaris / 2f + context.dpF(18f)
+            gambarLabel(canvas, "-5k", 180.0, cx, cy, rLabel)
+            gambarLabel(canvas, "0", 270.0, cx, cy, rLabel)
+            gambarLabel(canvas, "5k", 360.0, cx, cy, rLabel)
+        }
 
         // Jarum
         val sudutJarum = Math.toRadians(270.0 + frac * 90.0)
@@ -141,7 +145,7 @@ class GaugeView(context: Context) : View(context) {
             cy + (sin(sudutJarum) * panjangJarum).toFloat(),
             paintJarum
         )
-        canvas.drawCircle(cx, cy, context.dpF(9f), paintHub)
+        canvas.drawCircle(cx, cy, context.dpF(if (kompak) 5f else 9f), paintHub)
     }
 
     private fun gambarLabel(canvas: Canvas, teks: String, derajat: Double, cx: Float, cy: Float, jarak: Float) {
