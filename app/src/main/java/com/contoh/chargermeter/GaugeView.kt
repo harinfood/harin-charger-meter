@@ -1,5 +1,6 @@
 package com.contoh.chargermeter
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
@@ -7,13 +8,14 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.view.View
 import android.view.View.MeasureSpec
+import android.view.animation.DecelerateInterpolator
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 
 /**
  * Meter setengah lingkaran: kiri (merah) = memakai baterai, kanan (hijau) = mengisi daya.
- * Skala -5.000 mA sampai +5.000 mA.
+ * Skala -5.000 sampai +5.000 mA. Jarum bergerak halus ke nilai baru.
  */
 class GaugeView(context: Context) : View(context) {
 
@@ -21,11 +23,26 @@ class GaugeView(context: Context) : View(context) {
         const val MAKS_MA = 5000f
     }
 
-    var nilai: Int = 0
-        set(value) {
-            field = value
-            invalidate()
+    private var tampil = 0f
+    private var targetTerakhir = Float.NaN
+    private var animator: ValueAnimator? = null
+
+    /** Menggerakkan jarum dari posisi sekarang ke nilai baru (mA, + mengisi / - memakai). */
+    fun setNilai(target: Int) {
+        val t = target.toFloat()
+        if (t == targetTerakhir) return
+        targetTerakhir = t
+        animator?.cancel()
+        animator = ValueAnimator.ofFloat(tampil, t).apply {
+            duration = 800L
+            interpolator = DecelerateInterpolator()
+            addUpdateListener {
+                tampil = it.animatedValue as Float
+                invalidate()
+            }
+            start()
         }
+    }
 
     private val tebalGaris = context.dpF(20f)
     private val rect = RectF()
@@ -37,6 +54,11 @@ class GaugeView(context: Context) : View(context) {
     private val paintAktif = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = tebalGaris
+    }
+    private val paintGlow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = tebalGaris * 1.9f
+        color = Color.parseColor("#4D2E7D32")
     }
     private val paintTick = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -55,7 +77,7 @@ class GaugeView(context: Context) : View(context) {
     }
     private val paintLabel = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#607D8B")
-        textSize = context.dpF(12f)
+        textSize = context.dpF(13f)
         textAlign = Paint.Align.CENTER
     }
 
@@ -70,7 +92,8 @@ class GaugeView(context: Context) : View(context) {
         val h = height.toFloat()
         val cx = w / 2f
         val cy = h * 0.88f
-        val r = minOf(w * 0.40f, h * 0.80f)
+        // Ruang di kiri-kanan disisakan untuk label "-5k" dan "5k" agar tidak terpotong
+        val r = minOf(w / 2f - context.dpF(44f), h * 0.80f)
         rect.set(cx - r, cy - r, cx + r, cy + r)
 
         // Latar: kiri merah muda (memakai), kanan hijau muda (mengisi)
@@ -79,10 +102,10 @@ class GaugeView(context: Context) : View(context) {
         paintLatar.color = Color.parseColor("#A5D6A7")
         canvas.drawArc(rect, 270f, 90f, false, paintLatar)
 
-        // Busur aktif sesuai besar arus
-        val frac = (nilai.toFloat() / MAKS_MA).coerceIn(-1f, 1f)
+        val frac = (tampil / MAKS_MA).coerceIn(-1f, 1f)
         val lebarAktif = 90f * abs(frac)
         if (frac > 0f) {
+            canvas.drawArc(rect, 270f, lebarAktif, false, paintGlow)
             paintAktif.color = Color.parseColor("#2E7D32")
             canvas.drawArc(rect, 270f, lebarAktif, false, paintAktif)
         } else if (frac < 0f) {
@@ -103,7 +126,7 @@ class GaugeView(context: Context) : View(context) {
         }
 
         // Label skala
-        val rLabel = r + tebalGaris / 2f + context.dpF(16f)
+        val rLabel = r + tebalGaris / 2f + context.dpF(18f)
         gambarLabel(canvas, "-5k", 180.0, cx, cy, rLabel)
         gambarLabel(canvas, "0", 270.0, cx, cy, rLabel)
         gambarLabel(canvas, "5k", 360.0, cx, cy, rLabel)

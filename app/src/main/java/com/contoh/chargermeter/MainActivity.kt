@@ -1,5 +1,8 @@
 package com.contoh.chargermeter
 
+import android.animation.ObjectAnimator
+import android.animation.PropertyValuesHolder
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.PictureInPictureParams
 import android.content.Intent
@@ -7,6 +10,7 @@ import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -14,12 +18,34 @@ import android.os.Looper
 import android.util.Rational
 import android.view.Gravity
 import android.view.View
+import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import kotlin.math.roundToInt
+
+/** Angka yang bergerak halus dari nilai lama ke nilai baru. */
+private class AnimasiAngka(private val tampilkan: (Float) -> Unit) {
+    private var nilai = 0f
+    private var animator: ValueAnimator? = null
+
+    fun ke(target: Float) {
+        animator?.cancel()
+        animator = ValueAnimator.ofFloat(nilai, target).apply {
+            duration = 700L
+            interpolator = DecelerateInterpolator()
+            addUpdateListener {
+                nilai = it.animatedValue as Float
+                tampilkan(nilai)
+            }
+            start()
+        }
+    }
+}
 
 class MainActivity : Activity() {
 
@@ -27,9 +53,14 @@ class MainActivity : Activity() {
     private var hitungan = 0
 
     private lateinit var header: View
+    private lateinit var logoHeader: ImageView
+    private lateinit var dotStatus: View
+    private lateinit var txtSubjudul: TextView
+    private lateinit var kartuMeter: LinearLayout
+    private lateinit var kartuTip: LinearLayout
+    private lateinit var txtTip: TextView
     private lateinit var bagianDetail: View
     private lateinit var gauge: GaugeView
-    private lateinit var txtSubjudul: TextView
     private lateinit var txtPersen: TextView
     private lateinit var txtMa: TextView
     private lateinit var txtPerJam: TextView
@@ -41,6 +72,11 @@ class MainActivity : Activity() {
     private lateinit var barBaterai: ProgressBar
     private lateinit var txtKapasitas: TextView
     private lateinit var txtKesehatan: TextView
+    private lateinit var animMa: AnimasiAngka
+    private lateinit var animPersen: AnimasiAngka
+    private lateinit var animBar: AnimasiAngka
+    private var animDot: ObjectAnimator? = null
+    private var warnaDotTerakhir = 0
     private val tile = HashMap<String, Pair<TextView, TextView>>()
 
     private val jadwal = object : Runnable {
@@ -66,6 +102,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         handler.removeCallbacks(jadwal)
+        animDot?.cancel()
         super.onDestroy()
     }
 
@@ -76,13 +113,22 @@ class MainActivity : Activity() {
         scroll.setBackgroundColor(Warna.latarBelakang)
         scroll.isFillViewport = true
 
+        animMa = AnimasiAngka { v -> txtMa.text = "${v.roundToInt()} mA" }
+        animPersen = AnimasiAngka { v -> txtPersen.text = "${v.roundToInt()}%" }
+        animBar = AnimasiAngka { v -> barBaterai.progress = v.roundToInt() }
+
         val root = linear(this)
         root.setPadding(0, 0, 0, dp(28))
         scroll.addView(root)
 
         header = buatHeader()
         root.addView(header)
-        root.addView(buatKartuMeter(), kartuLp(this, 16))
+
+        kartuMeter = buatKartuMeter()
+        root.addView(kartuMeter, kartuLp(this, 16))
+
+        kartuTip = buatKartuTip()
+        root.addView(kartuTip, kartuLp(this, 12))
 
         val detail = linear(this)
         detail.addView(buatKartuKapasitas(), kartuLp(this, 16))
@@ -95,42 +141,86 @@ class MainActivity : Activity() {
         bagianDetail = detail
         root.addView(detail)
 
-        // Nilai perangkat yang tetap
         isiTile("android", Build.VERSION.RELEASE, "", Warna.teksRedup)
         isiTile("pabrikan", Build.MANUFACTURER.replaceFirstChar { it.uppercase() }, "", Warna.teksRedup)
         isiTile("model", Build.MODEL, "", Warna.teksRedup)
 
+        // Kemunculan bertahap
+        munculkan(header, 0)
+        munculkan(kartuMeter, 1)
+        munculkan(kartuTip, 2)
+        munculkan(detail, 3)
+
         return scroll
     }
 
+    /** Animasi masuk: naik sedikit sambil memudar, dengan jeda berurutan. */
+    private fun munculkan(v: View, urutan: Int) {
+        v.alpha = 0f
+        v.translationY = dpF(28f)
+        v.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setStartDelay(urutan * 110L)
+            .setDuration(520L)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
+    }
+
+    private fun titik(warna: Int): GradientDrawable {
+        val g = GradientDrawable()
+        g.setShape(GradientDrawable.OVAL)
+        g.setColor(warna)
+        return g
+    }
+
     private fun buatHeader(): View {
-        val h = LinearLayout(this)
-        h.orientation = LinearLayout.HORIZONTAL
+        val h = linear(this, false)
         h.gravity = Gravity.CENTER_VERTICAL
-        h.setPadding(dp(20), dp(40), dp(12), dp(20))
+        h.setPadding(dp(18), dp(40), dp(12), dp(18))
         h.background = GradientDrawable(
             GradientDrawable.Orientation.LEFT_RIGHT,
             intArrayOf(Warna.hijauTua, Warna.hijauTerang)
         )
 
-        val kiri = linear(this)
-        kiri.addView(teks(this, "Charger Meter", 26f, Color.WHITE, true))
-        txtSubjudul = teks(this, "Memuat…", 15f, Color.parseColor("#E8F5E9"))
-        kiri.addView(txtSubjudul)
-        h.addView(kiri, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        // Logo aplikasi dengan sudut luar transparan (tanpa bingkai putih)
+        logoHeader = ImageView(this)
+        logoHeader.setImageResource(R.drawable.logo_charger)
+        logoHeader.scaleType = ImageView.ScaleType.FIT_CENTER
+        logoHeader.scaleX = 0.5f
+        logoHeader.scaleY = 0.5f
+        logoHeader.animate().scaleX(1f).scaleY(1f).setDuration(800L).setInterpolator(OvershootInterpolator()).start()
+        h.addView(logoHeader, LinearLayout.LayoutParams(dp(66), dp(66)).apply { marginEnd = dp(12) })
+        ObjectAnimator.ofFloat(logoHeader, "translationY", 0f, -dpF(5f)).apply {
+            setDuration(1600L)
+            repeatCount = ObjectAnimator.INFINITE
+            repeatMode = ObjectAnimator.REVERSE
+            start()
+        }
 
-        h.addView(tombolTeks("⚙") {
-            startActivity(Intent(this, PengaturanActivity::class.java))
-        })
+        val kolom = linear(this)
+        kolom.addView(teks(this, "Harin Charger Meter", 20f, Color.WHITE, true))
+
+        val baris = linear(this, false)
+        baris.gravity = Gravity.CENTER_VERTICAL
+        dotStatus = View(this)
+        dotStatus.background = titik(Color.parseColor("#B0BEC5"))
+        baris.addView(dotStatus, LinearLayout.LayoutParams(dp(9), dp(9)).apply { marginEnd = dp(6) })
+        txtSubjudul = teks(this, "Memuat…", 14f, Color.parseColor("#E8F5E9"))
+        baris.addView(txtSubjudul)
+        kolom.addView(baris)
+
+        h.addView(kolom, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        h.addView(tombolTeks("⚙") { startActivity(Intent(this, PengaturanActivity::class.java)) })
         h.addView(tombolPip())
         return h
     }
 
-    private fun tombolLatar(): GradientDrawable {
+    private fun tombolLatar(): RippleDrawable {
         val g = GradientDrawable()
         g.setShape(GradientDrawable.OVAL)
         g.setColor(Color.parseColor("#33FFFFFF"))
-        return g
+        return RippleDrawable(ColorStateList.valueOf(Color.parseColor("#66FFFFFF")), g, null)
     }
 
     private fun tombolTeks(label: String, aksi: () -> Unit): TextView {
@@ -212,6 +302,16 @@ class MainActivity : Activity() {
         return k
     }
 
+    private fun buatKartuTip(): LinearLayout {
+        val k = linear(this, false)
+        k.gravity = Gravity.CENTER_VERTICAL
+        k.setPadding(dp(16), dp(14), dp(16), dp(14))
+        k.background = kotak(this, Color.parseColor("#E8F5E9"), 18)
+        txtTip = teks(this, "Memuat…", 14f, Warna.teksUtama)
+        k.addView(txtTip, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        return k
+    }
+
     private fun barisNilai(label: String, nilai: TextView): LinearLayout {
         val b = linear(this, false)
         b.gravity = Gravity.CENTER_VERTICAL
@@ -252,7 +352,11 @@ class MainActivity : Activity() {
             val t = linear(this)
             t.gravity = Gravity.CENTER_HORIZONTAL
             t.setPadding(dp(6), dp(14), dp(6), dp(14))
-            t.background = kotak(this, Color.WHITE, 18, Color.parseColor("#E0E6EA"))
+            t.background = RippleDrawable(
+                ColorStateList.valueOf(Color.parseColor("#33FB8C00")),
+                kotak(this, Color.WHITE, 18, Color.parseColor("#E0E6EA")),
+                null
+            )
 
             val lbl = teks(this, judul, 13f, Warna.teksRedup)
             lbl.gravity = Gravity.CENTER_HORIZONTAL
@@ -264,6 +368,10 @@ class MainActivity : Activity() {
             t.addView(lbl)
             t.addView(nilai)
             t.addView(status)
+            t.setOnClickListener {
+                val info = if (status.text.isNullOrEmpty()) nilai.text else "${nilai.text} (${status.text})"
+                Toast.makeText(this, "$judul: $info", Toast.LENGTH_SHORT).show()
+            }
             tile[kunci] = Pair(nilai, status)
 
             val p = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
@@ -286,10 +394,20 @@ class MainActivity : Activity() {
         val d = BatteriInfo.baca(this)
         Pengaturan.catatArus(this, d.arusMa)
 
-        txtPersen.text = "${d.persen}%"
+        // Header & status
         txtSubjudul.text = "${d.statusTeks} · ${d.persen}%"
-        gauge.nilai = d.arusBertanda
-        txtMa.text = "${d.arusMa} mA"
+        val warnaDot = warnaDot(d)
+        if (warnaDot != warnaDotTerakhir) {
+            warnaDotTerakhir = warnaDot
+            dotStatus.background = titik(warnaDot)
+        }
+        aturDenyut(d.arusBertanda > 0)
+
+        // Meter & angka yang bergerak halus
+        animPersen.ke(d.persen.toFloat())
+        gauge.setNilai(d.arusBertanda)
+        animMa.ke(d.arusMa.toFloat())
+        animBar.ke(d.persen.toFloat())
 
         txtPerJam.text = d.persenPerJam?.let { "%.0f%% per jam".format(it) } ?: "--"
         txtPerJamSub.text = if (d.terhubung) {
@@ -297,7 +415,6 @@ class MainActivity : Activity() {
         } else {
             "Dipakai · %.1f W".format(d.dayaWatt)
         }
-
         txtPenuh.text = when {
             d.menitPenuh == null -> "--"
             d.menitPenuh == 0 -> "Penuh"
@@ -314,7 +431,12 @@ class MainActivity : Activity() {
         txtMaks.text = if (maks > 0) "$maks mA" else "--"
         txtMin.text = if (min > 0) "$min mA" else "--"
 
-        barBaterai.progress = d.persen
+        // Tips yang menyesuaikan kondisi baterai
+        val (tipTeks, tipWarna) = tipUntuk(d)
+        txtTip.text = tipTeks
+        kartuTip.background = kotak(this, tipWarna, 18)
+
+        // Kapasitas
         txtKapasitas.text = if (d.kapasitasMah > 0) {
             "Kapasitas terbaca ${d.kapasitasMah} mAh"
         } else {
@@ -347,6 +469,61 @@ class MainActivity : Activity() {
         )
 
         if (hitungan % 5 == 0) WidgetBaterai.perbaruiSemua(this)
+    }
+
+    /** Pesan singkat yang menyesuaikan kondisi, dengan warna latar yang sesuai. */
+    private fun tipUntuk(d: DataBaterai): Pair<String, Int> {
+        val hijau = Color.parseColor("#E8F5E9")
+        val merah = Color.parseColor("#FFEBEE")
+        val biru = Color.parseColor("#E3F2FD")
+        return when {
+            d.suhuC >= 45f -> Pair(
+                "🌡️ Suhu baterai tinggi (%.1f °C). Lepas charger sementara dan kurangi pemakaian berat.".format(d.suhuC),
+                merah
+            )
+            d.terhubung && d.persen >= Pengaturan.targetIsi(this) -> Pair(
+                "🔌 Baterai sudah ${d.persen}%. Cabut charger agar baterai lebih awet.",
+                hijau
+            )
+            d.terhubung && d.jamPenuh != null -> Pair(
+                "⚡ Sedang mengisi daya. Perkiraan penuh pukul ${d.jamPenuh}, sekitar ${d.menitPenuh} menit lagi.",
+                hijau
+            )
+            d.terhubung -> Pair("⚡ Charger terhubung. Menunggu data pengisian…", hijau)
+            d.persen <= Pengaturan.ambangRendah(this) -> Pair(
+                "⚠️ Baterai tinggal ${d.persen}%. Segera hubungkan charger.",
+                merah
+            )
+            else -> Pair("🔋 Sedang memakai baterai. Kurangi kecerahan layar untuk menghemat daya.", biru)
+        }
+    }
+
+    private fun warnaDot(d: DataBaterai): Int = when {
+        d.arusBertanda > 0 -> Color.parseColor("#B9F6CA")
+        d.arusBertanda < 0 -> Color.parseColor("#FFB74D")
+        d.terhubung -> Color.parseColor("#80D8FF")
+        else -> Color.parseColor("#B0BEC5")
+    }
+
+    /** Titik status berdenyut saat baterai sedang diisi. */
+    private fun aturDenyut(aktif: Boolean) {
+        if (aktif && animDot == null) {
+            animDot = ObjectAnimator.ofPropertyValuesHolder(
+                dotStatus,
+                PropertyValuesHolder.ofFloat("scaleX", 1f, 1.7f),
+                PropertyValuesHolder.ofFloat("scaleY", 1f, 1.7f)
+            ).apply {
+                setDuration(900L)
+                repeatCount = ObjectAnimator.INFINITE
+                repeatMode = ObjectAnimator.REVERSE
+                start()
+            }
+        } else if (!aktif && animDot != null) {
+            animDot?.cancel()
+            animDot = null
+            dotStatus.scaleX = 1f
+            dotStatus.scaleY = 1f
+        }
     }
 
     private fun statusVoltase(v: Float): Pair<String, Int> = when {
