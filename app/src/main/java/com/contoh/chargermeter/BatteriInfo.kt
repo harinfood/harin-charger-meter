@@ -65,9 +65,15 @@ object BatteriInfo {
             else -> 0
         }
 
-        // Kapasitas saat ini dalam µAh -> mAh
-        val chargeUah = bm.getLongProperty(BatteryManager.BATTERY_PROPERTY_CHARGE_FULL)
-        val kapasitasMah = if (chargeUah > 0L) (chargeUah / 1000L).toInt() else 0
+        // Kapasitas penuh tidak tersedia sebagai API publik. Diperkirakan dari muatan
+        // saat ini (CHARGE_COUNTER, µAh) dibagi persentase level, hanya jika level >= 10%
+        // agar pembulatan persen tidak terlalu besar pengaruhnya.
+        val muatanUah = bm.getLongProperty(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER)
+        val kapasitasMah = if (muatanUah > 0L && persen >= 10) {
+            (muatanUah * 100L / persen / 1000L).toInt()
+        } else {
+            0
+        }
 
         val voltase = voltMv / 1000f
         // mV x mA / 1.000.000 = watt
