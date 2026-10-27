@@ -34,7 +34,7 @@ class WidgetBaterai : AppWidgetProvider() {
             for (id in ids) {
                 val v = RemoteViews(context.packageName, R.layout.widget_baterai)
                 v.setTextViewText(R.id.wPersen, "${d.persen}%")
-                v.setTextViewText(R.id.wArus, "${abs(d.arusBertanda)} mA")
+                v.setTextViewText(R.id.wArus, (if (d.arusBertanda < 0) "-" else "+") + "${abs(d.arusBertanda)} mA")
                 v.setTextViewText(R.id.wStatus, d.statusTeks)
                 v.setTextViewText(
                     R.id.wDetail,

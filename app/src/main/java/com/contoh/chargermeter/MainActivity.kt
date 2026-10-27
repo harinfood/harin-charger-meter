@@ -135,7 +135,7 @@ class MainActivity : Activity() {
         scroll.setBackgroundColor(Warna.latarBelakang)
         scroll.isFillViewport = true
 
-        animMa = AnimasiAngka { v -> txtMa.text = "${v.roundToInt()} mA" }
+        animMa = AnimasiAngka { v -> txtMa.text = formatArus(v.roundToInt()) }
         animPersen = AnimasiAngka { v -> txtPersen.text = "${v.roundToInt()}%" }
         animBar = AnimasiAngka { v -> barBaterai.progress = v.roundToInt() }
 
@@ -428,7 +428,8 @@ class MainActivity : Activity() {
         // Meter & angka yang bergerak halus
         animPersen.ke(d.persen.toFloat())
         gauge.setNilai(d.arusBertanda)
-        animMa.ke(d.arusMa.toFloat())
+        animMa.ke(d.arusBertanda.toFloat())
+        txtMa.setTextColor(warnaArus(d))
         animBar.ke(d.persen.toFloat())
 
         txtPerJam.text = d.persenPerJam?.let { "%.0f%% per jam".format(it) } ?: "--"
@@ -547,6 +548,19 @@ class MainActivity : Activity() {
             dotStatus.scaleX = 1f
             dotStatus.scaleY = 1f
         }
+    }
+
+    /** Arus bertanda: + saat mengisi, - saat memakai baterai. */
+    private fun formatArus(ma: Int): String = when {
+        ma < 0 -> "-${-ma} mA"
+        ma > 0 -> "+$ma mA"
+        else -> "0 mA"
+    }
+
+    private fun warnaArus(d: DataBaterai): Int = when {
+        d.arusBertanda < 0 -> Color.parseColor("#D32F2F")
+        d.arusBertanda > 0 -> Warna.hijau
+        else -> Warna.teksUtama
     }
 
     private fun statusVoltase(v: Float): Pair<String, Int> = when {
@@ -699,7 +713,7 @@ class MainActivity : Activity() {
     private fun renderPipKolom(d: DataBaterai) {
         when (pipHalaman) {
             0 -> {
-                pipAngka.text = "${d.arusMa} mA"
+                pipAngka.text = formatArus(d.arusBertanda)
                 pipSub.text = when {
                     d.arusBertanda > 0 -> "Arus mengalir masuk"
                     d.arusBertanda < 0 -> "Arus mengalir keluar"
